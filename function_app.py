@@ -2,11 +2,11 @@ import logging
 import json
 import azure.functions as func
 from functions import (
-    get_image_analysis_client,
     extract_blob_url_from_subject,
-    vectorize_image,
+    process_image_complete,
     is_image_file
 )
+from search import upload
 
 app = func.FunctionApp()
 
@@ -45,22 +45,34 @@ def process_blob(event: func.EventGridEvent):
         
         # Initialize Azure AI Vision client
         try:
-            vision_client = get_image_analysis_client()
-        except ValueError as e:
-            logging.error(f"Failed to initialize Vision client: {str(e)}")
-            return
-        
-        # Vectorize the image
-        try:
-            analysis_result = vectorize_image(vision_client, blob_url)
-            logging.info(f"Successfully analyzed image: {blob_url}")
-            logging.info(f"Analysis result: {json.dumps(analysis_result, indent=2)}")
+            # Process the image (both vectorization and analysis)
+            processing_result = process_image_complete(blob_url)
+            logging.info(f"Successfully processed image: {blob_url}")
+            logging.info(f"Vector embedding length: {len(processing_result.get('vector_embedding', []))}")
+            logging.info(f"Analysis result: {json.dumps(processing_result.get('analysis', {}), indent=2)}")
             
-            # Here you could store the analysis results in a database, search index, etc.
-            # For now, we're just logging the results
+            # Extract image name from the blob URL
+            image_name = blob_url.split('/')[-1]  # Get filename from URL
+            
+            # Upload to search index
+            try:
+                upload_result = upload(
+                    image_name=image_name,
+                    url=blob_url,
+                    vector=processing_result.get('vector_embedding', [])
+                )
+                
+                if upload_result.get('success'):
+                    logging.info(f"Successfully uploaded image '{image_name}' to search index")
+                    logging.info(f"Document key: {upload_result.get('document_key')}")
+                else:
+                    logging.error(f"Failed to upload image '{image_name}' to search index: {upload_result.get('error')}")
+                
+            except Exception as e:
+                logging.error(f"Error uploading image '{image_name}' to search index: {str(e)}")
             
         except Exception as e:
-            logging.error(f"Failed to analyze image {blob_url}: {str(e)}")
+            logging.error(f"Failed to process image {blob_url}: {str(e)}")
             return
             
     except Exception as e:

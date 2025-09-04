@@ -1,9 +1,11 @@
 """
-Helper functions for image analysis using Azure AI Vision.
+Helper functions for image analysis and vectorization using Azure AI Vision.
 """
 
 import logging
 import os
+import requests
+import json
 from urllib.parse import urlparse
 from azure.ai.vision.imageanalysis import ImageAnalysisClient
 from azure.ai.vision.imageanalysis.models import VisualFeatures
@@ -55,8 +57,61 @@ def extract_blob_url_from_subject(subject: str) -> str:
     return blob_url
 
 
-def vectorize_image(client: ImageAnalysisClient, image_url: str) -> dict:
-    """Vectorize image using Azure AI Vision and return analysis results."""
+def vectorize_image_embedding(image_url: str) -> dict:
+    """Generate vector embeddings for an image using Azure Computer Vision vectorization API."""
+    endpoint = os.environ.get("AZURE_AI_VISION_ENDPOINT")
+    api_key = os.environ.get("AZURE_AI_VISION_KEY")
+    
+    if not endpoint or not api_key:
+        raise ValueError("AZURE_AI_VISION_ENDPOINT and AZURE_AI_VISION_KEY environment variables must be set")
+    
+    # Construct the vectorization API URL
+    vectorize_url = f"{endpoint.rstrip('/')}/computervision/retrieval:vectorizeImage"
+    
+    headers = {
+        "Ocp-Apim-Subscription-Key": api_key,
+        "Content-Type": "application/json"
+    }
+    
+    params = {
+        "api-version": "2024-02-01",
+        "model-version": "2023-04-15"
+    }
+    
+    payload = {
+        "url": image_url
+    }
+    
+    try:
+        response = requests.post(
+            vectorize_url,
+            headers=headers,
+            params=params,
+            json=payload,
+            timeout=30
+        )
+        
+        response.raise_for_status()
+        
+        vector_data = response.json()
+        
+        return {
+            "image_url": image_url,
+            "vector": vector_data.get("vector", []),
+            "model_version": "2023-04-15",
+            "api_version": "2024-02-01"
+        }
+        
+    except requests.exceptions.RequestException as e:
+        logging.error(f"Error vectorizing image {image_url}: {str(e)}")
+        raise
+    except Exception as e:
+        logging.error(f"Unexpected error vectorizing image {image_url}: {str(e)}")
+        raise
+
+
+def analyze_image(client: ImageAnalysisClient, image_url: str) -> dict:
+    """Analyze image using Azure AI Vision and return analysis results."""
     try:
         # Analyze the image for various visual features
         result = client.analyze_from_url(
@@ -70,17 +125,42 @@ def vectorize_image(client: ImageAnalysisClient, image_url: str) -> dict:
             ]
         )
         
+        # Helper function to convert bounding box to serializable dict
+        def bounding_box_to_dict(bbox):
+            if bbox is None:
+                return None
+            return {
+                "x": bbox.x,
+                "y": bbox.y,
+                "width": bbox.width,
+                "height": bbox.height
+            }
+        
+        # Helper function to convert bounding polygon to serializable list
+        def bounding_polygon_to_list(polygon):
+            if polygon is None:
+                return None
+            return [{"x": point.x, "y": point.y} for point in polygon]
+        
         # Extract relevant information for vectorization
         analysis_data = {
             "image_url": image_url,
             "caption": result.caption.text if result.caption else None,
             "confidence": result.caption.confidence if result.caption else None,
             "dense_captions": [
-                {"text": caption.text, "confidence": caption.confidence, "bounding_box": caption.bounding_box}
+                {
+                    "text": caption.text, 
+                    "confidence": caption.confidence, 
+                    "bounding_box": bounding_box_to_dict(caption.bounding_box)
+                }
                 for caption in (result.dense_captions.list if result.dense_captions else [])
             ],
             "objects": [
-                {"name": obj.tags[0].name if obj.tags else "unknown", "confidence": obj.tags[0].confidence if obj.tags else 0, "bounding_box": obj.bounding_box}
+                {
+                    "name": obj.tags[0].name if obj.tags else "unknown", 
+                    "confidence": obj.tags[0].confidence if obj.tags else 0, 
+                    "bounding_box": bounding_box_to_dict(obj.bounding_box)
+                }
                 for obj in (result.objects.list if result.objects else [])
             ],
             "tags": [
@@ -88,7 +168,10 @@ def vectorize_image(client: ImageAnalysisClient, image_url: str) -> dict:
                 for tag in (result.tags.list if result.tags else [])
             ],
             "text": [
-                {"text": line.text, "bounding_box": line.bounding_polygon}
+                {
+                    "text": line.text, 
+                    "bounding_box": bounding_polygon_to_list(line.bounding_polygon)
+                }
                 for block in (result.read.blocks if result.read else [])
                 for line in block.lines
             ]
@@ -98,6 +181,38 @@ def vectorize_image(client: ImageAnalysisClient, image_url: str) -> dict:
         
     except Exception as e:
         logging.error(f"Error analyzing image {image_url}: {str(e)}")
+        raise
+
+
+def process_image_complete(image_url: str) -> dict:
+    """Complete image processing: both vectorization and analysis."""
+    try:
+        # Get vector embeddings
+        vector_data = vectorize_image_embedding(image_url)
+        
+        # Get image analysis
+        client = get_image_analysis_client()
+        analysis_data = analyze_image(client, image_url)
+        
+        # Combine both results
+        complete_data = {
+            "image_url": image_url,
+            "vector_embedding": vector_data["vector"],
+            "model_version": vector_data["model_version"],
+            "analysis": {
+                "caption": analysis_data["caption"],
+                "confidence": analysis_data["confidence"],
+                "dense_captions": analysis_data["dense_captions"],
+                "objects": analysis_data["objects"],
+                "tags": analysis_data["tags"],
+                "text": analysis_data["text"]
+            }
+        }
+        
+        return complete_data
+        
+    except Exception as e:
+        logging.error(f"Error processing image {image_url}: {str(e)}")
         raise
 
 
