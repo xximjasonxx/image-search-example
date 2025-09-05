@@ -7,6 +7,7 @@ from functions import (
     is_image_file
 )
 from search import upload
+from llm import vectorize_text
 
 app = func.FunctionApp()
 
@@ -78,3 +79,56 @@ def process_blob(event: func.EventGridEvent):
     except Exception as e:
         logging.error(f"Unexpected error processing event: {str(e)}")
         raise
+
+
+@app.function_name(name="search")
+@app.route(route="search", methods=["POST"])
+def query_endpoint(req: func.HttpRequest) -> func.HttpResponse:
+    """HTTP endpoint that accepts POST requests with a JSON payload containing a 'query' field."""
+    try:
+        # Parse JSON body
+        try:
+            req_body = req.get_json()
+        except ValueError:
+            return func.HttpResponse(
+                "Invalid JSON in request body",
+                status_code=400
+            )
+        
+        # Check if request body is None
+        if req_body is None:
+            return func.HttpResponse(
+                "Request body is required",
+                status_code=400
+            )
+        
+        # Check if 'query' field is present
+        if 'query' not in req_body:
+            return func.HttpResponse(
+                "Missing required field 'query' in request body",
+                status_code=400
+            )
+        
+        query = req_body['query']
+        logging.info(f"Received query: {query}")
+        
+        # Vectorize the query text
+        vector = vectorize_text(query)
+        
+        # Return success response
+        return func.HttpResponse(
+            json.dumps({
+                "message": "Query received successfully", 
+                "query": query,
+                "vector": vector
+            }),
+            status_code=200,
+            mimetype="application/json"
+        )
+        
+    except Exception as e:
+        logging.error(f"Error processing query request: {str(e)}")
+        return func.HttpResponse(
+            "Internal server error",
+            status_code=500
+        )

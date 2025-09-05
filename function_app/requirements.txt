@@ -6,3 +6,4 @@ azure-functions
 azure-ai-vision-imageanalysis
 azure-search-documents
 requests
+openai
