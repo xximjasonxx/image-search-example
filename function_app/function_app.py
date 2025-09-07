@@ -6,7 +6,7 @@ from functions import (
     process_image_complete,
     is_image_file
 )
-from search import upload
+from search import upload, search_similar_images
 from llm import vectorize_text
 
 app = func.FunctionApp()
@@ -115,12 +115,15 @@ def query_endpoint(req: func.HttpRequest) -> func.HttpResponse:
         # Vectorize the query text
         vector = vectorize_text(query)
         
+        # Search for similar images using the vector
+        similar_images = search_similar_images(vector)
+        
         # Return success response
         return func.HttpResponse(
             json.dumps({
                 "message": "Query received successfully", 
                 "query": query,
-                "vector": vector
+                "similar_images": similar_images
             }),
             status_code=200,
             mimetype="application/json"

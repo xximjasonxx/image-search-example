@@ -125,32 +125,33 @@ def search_similar_images(query_vector: List[float], top_k: int = 5) -> List[dic
     try:
         search_client = get_search_client()
         
-        # Create vectorized query
+        # Create vectorized query with similarity threshold
         vector_query = VectorizedQuery(
             vector=query_vector,
             k_nearest_neighbors=top_k,
-            fields="vector"
+            fields="vector_content",
+            threshold=0.50  # Only return results with similarity >= 0.50
         )
         
         # Perform search
         results = search_client.search(
-            search_text=None,
+            search_text="",
             vector_queries=[vector_query],
-            select=["id", "image_name", "image_url"],
+            select=["filename", "url"],
             top=top_k
         )
         
-        # Format results
+        # Format results (threshold filtering is done at search level)
         similar_images = []
         for result in results:
+            score = result.get("@search.score", 0.0)
             similar_images.append({
-                "id": result.get("id"),
-                "image_name": result.get("image_name"),
-                "image_url": result.get("image_url"),
-                "score": result.get("@search.score", 0.0)
+                "image_name": result.get("filename"),
+                "image_url": result.get("url"),
+                "score": score
             })
         
-        logging.info(f"Found {len(similar_images)} similar images")
+        logging.info(f"Found {len(similar_images)} similar images with threshold >= 0.50")
         return similar_images
         
     except Exception as e:

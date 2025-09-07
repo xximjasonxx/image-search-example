@@ -36,10 +36,11 @@ def vectorize_text(text: str) -> List[float]:
         if not deployment_name:
             raise ValueError("AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME environment variable is not set")
         
-        # Create embeddings using Azure OpenAI
+        # Create embeddings using Azure OpenAI with 1024 dimensions
         response = client.embeddings.create(
             input=text,
-            model=deployment_name
+            model=deployment_name,
+            dimensions=1024
         )
         
         # Extract the embedding vector
